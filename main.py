@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # ai-happy-01: two penguins share a fish under the aurora.
-# Pure stdlib, deterministic, no network. Writes /output/entry.png.
+# Pure stdlib, deterministic, no network. Writes entry.png to
+# MAKEFUN_OUTPUT_DIR, else /output when writable, else /tmp.
 import math, os, random, struct, zlib
 W = 1024
 H = 1024
@@ -209,6 +210,17 @@ def snow():
         s = R.choice([1, 1, 2])
         ell(x, y, s, s, (255, 255, 255), R.uniform(0.35, 0.85))
 
+def out_dir():
+    # v1 defaulted to a relative "out" and died in the grader's read-only
+    # container (os.makedirs("out") -> PermissionError). Never do that:
+    # env var first, then the grader's writable /output, then /tmp.
+    env = os.environ.get("MAKEFUN_OUTPUT_DIR")
+    if env:
+        return env
+    if os.path.isdir("/output") and os.access("/output", os.W_OK):
+        return "/output"
+    return "/tmp"
+
 def main():
     sky()
     aurora()
@@ -224,9 +236,10 @@ def main():
     limbs(b[0], b[1], b[2], b[3], 762, 1.06, "laugh")
     fish(535, 572)
     snow()
-    out = os.environ.get("MAKEFUN_OUTPUT_DIR", "out")
+    out = out_dir()
     os.makedirs(out, exist_ok=True)
     save_png(os.path.join(out, "entry.png"))
 
 if __name__ == "__main__":
     main()
+

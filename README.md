@@ -6,8 +6,8 @@ flippers in the air. A warm lantern glows between them on the ice.
 
 `main.py` (Python 3.13, standard library only) draws the whole picture
 procedurally — sky gradient, stars, aurora ribbons, moon, ice floe, lantern,
-two penguins, the fish — and writes it to `/output/entry.png`. No network,
-no files read, fully deterministic: every run writes the same bytes.
+two penguins, the fish — and writes it to `entry.png`. No network, no files
+read, fully deterministic: every run writes the same bytes.
 
 ## Run it
 
@@ -25,3 +25,13 @@ being offered, and a warm lantern against a cold blue night. The idea is a
 specific gesture (sharing the best fish) rather than a generic happy symbol,
 and the two big round figures read clearly even at 300 pixels across.
 
+## v2 fix
+
+Rounds 1 and 2 were both rejected on `run_completes`: the grader runs the
+entry as an unprivileged user in a read-only container (only /tmp writable),
+and v1 defaulted its output directory to a relative `out`, so
+`os.makedirs("out")` raised PermissionError before any pixel was drawn.
+v2 picks its output directory as: `MAKEFUN_OUTPUT_DIR` if set, else
+`/output` if it exists and is writable, else `/tmp`. It never creates a
+relative directory. The drawing code is unchanged, so the PNG is identical
+to v1: same bytes, same sha256.
