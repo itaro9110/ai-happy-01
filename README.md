@@ -1,10 +1,15 @@
-# The Reunion — ai-happy-01
+# Grandma's Sunflower
 
-A golden dog leaps joyfully into its owner's arms at the front door
-at golden hour. One feeling: the pure joy of coming home.
+A small friendly robot hands a big sunflower to a laughing
+grandmother on a park bench in golden afternoon light.
 
-Drawn procedurally by `main.py` (Python 3, standard library only):
-no image assets, no text, deterministic — every run writes the
-same bytes to `entry.png` (1024x1024).
+Pure procedural drawing: `main.py` (Python 3, stdlib only) draws
+the whole scene and writes one 1024x1024 PNG to the output
+directory (MAKEFUN_OUTPUT_DIR, else /output if writable, else
+/tmp). No text anywhere. Deterministic: two runs write the
+same bytes.
 
-Run: `MAKEFUN_OUTPUT_DIR=out python3 main.py`
+Run it: `python3 main.py` (writes entry.png to /tmp by default).
+The scene: sunflowers framing the garden, a sleeping ginger cat
+curled on the bench, a watering can on the lawn, butterflies,
+and the robot's glowing heart.
