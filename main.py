@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Sunflower Waltz - an old robot dancing in his workshop, holding a
-tiny potted sunflower under a warm lamp. Confetti of metal shavings
-drifts like snow. No text anywhere.
+"""The Reunion -- ai-happy-01 entry.
 
-Python 3 standard library only. Deterministic: fixed seed, no clock,
-no randomness from time, no network. Writes one PNG (1024x1024)."""
-import math, os, random, struct, zlib
+A golden dog leaps joyfully into its owner's arms at the front
+door at golden hour. Pure procedural drawing, Python stdlib only.
+No text anywhere. Deterministic: fixed seed, same bytes every run.
+"""
+import math
+import os
+import random
+import struct
+import zlib
 
 W = H = 1024
-RNG = random.Random(20261113)
+
 
 def out_dir():
     d = os.environ.get("MAKEFUN_OUTPUT_DIR")
@@ -18,433 +22,262 @@ def out_dir():
         return "/output"
     return "/tmp"
 
-def save_png(path, px):
-    raw = b"".join(b"\x00" + bytes(px[y * W * 3:(y + 1) * W * 3])
-                   for y in range(H))
-    def chunk(t, data):
-        c = t + data
-        return struct.pack(">I", len(data)) + c + struct.pack(
-            ">I", zlib.crc32(c) & 0xFFFFFFFF)
-    ihdr = struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)
-    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
-           + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
-    with open(path, "wb") as f:
-        f.write(png)
 
-px = bytearray(W * H * 3)
+def _chunk(kind, data):
+    return (struct.pack(">I", len(data)) + kind + data +
+            struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
 
-def put(x, y, c, a=1.0):
-    x = int(x); y = int(y)
-    if 0 <= x < W and 0 <= y < H:
-        i = (y * W + x) * 3
+
+def png_bytes(rows, w, h):
+    raw = b"".join(b"\x00" + bytes(r) for r in rows)
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", ihdr) +
+            _chunk(b"IDAT", zlib.compress(raw, 9)) + _chunk(b"IEND", b""))
+
+
+def hx(s):
+    return (int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
+
+
+class Canvas:
+    def __init__(self, w, h):
+        self.w, self.h = w, h
+        self.rows = [bytearray(w * 3) for _ in range(h)]
+
+    def set(self, x, y, c):
+        if 0 <= x < self.w and 0 <= y < self.h:
+            i = x * 3
+            self.rows[y][i:i + 3] = bytes(c)
+
+    def blend(self, x, y, c, a):
+        if a <= 0 or not (0 <= x < self.w and 0 <= y < self.h):
+            return
+        if a >= 1:
+            self.set(x, y, c)
+            return
+        i = x * 3
+        r = self.rows[y]
+        r[i] = int(r[i] + (c[0] - r[i]) * a)
+        r[i + 1] = int(r[i + 1] + (c[1] - r[i + 1]) * a)
+        r[i + 2] = int(r[i + 2] + (c[2] - r[i + 2]) * a)
+
+    def rect(self, x0, y0, x1, y1, c, a=1.0):
+        x0 = max(0, x0)
+        y0 = max(0, y0)
+        x1 = min(self.w, x1)
+        y1 = min(self.h, y1)
+        if x1 <= x0 or y1 <= y0:
+            return
         if a >= 1.0:
-            px[i], px[i + 1], px[i + 2] = c
+            row = bytes(c) * (x1 - x0)
+            for y in range(y0, y1):
+                self.rows[y][x0 * 3:x1 * 3] = row
         else:
-            px[i] = int(px[i] + (c[0] - px[i]) * a)
-            px[i + 1] = int(px[i + 1] + (c[1] - px[i + 1]) * a)
-            px[i + 2] = int(px[i + 2] + (c[2] - px[i + 2]) * a)
+            for y in range(y0, y1):
+                for x in range(x0, x1):
+                    self.blend(x, y, c, a)
 
-def mix(c0, c1, t):
-    return (int(c0[0] + (c1[0] - c0[0]) * t),
-            int(c0[1] + (c1[1] - c0[1]) * t),
-            int(c0[2] + (c1[2] - c0[2]) * t))
-def disc(cx, cy, r, c, a=1.0):
-    r = int(r)
-    for y in range(int(cy) - r, int(cy) + r + 1):
-        dy = y - cy
-        dx = int((r * r - dy * dy) ** 0.5) if abs(dy) <= r else -1
-        if dx < 0:
-            continue
-        for x in range(int(cx) - dx, int(cx) + dx + 1):
-            put(x, y, c, a)
+    def vgrad(self, x0, x1, y0, y1, top, bot):
+        for y in range(max(0, y0), min(self.h, y1)):
+            t = (y - y0) / max(1, y1 - y0 - 1)
+            c = tuple(int(top[i] + (bot[i] - top[i]) * t)
+                      for i in range(3))
+            self.rect(x0, y, x1, y + 1, c)
 
-def ellipse(cx, cy, rx, ry, c, a=1.0):
-    for y in range(int(cy - ry), int(cy + ry) + 1):
-        t = (y - cy) / ry
-        if abs(t) > 1:
-            continue
-        dx = int(rx * (1 - t * t) ** 0.5)
-        for x in range(int(cx) - dx, int(cx) + dx + 1):
-            put(x, y, c, a)
+    def disc(self, cx, cy, r, c, a=1.0):
+        r2 = r * r
+        for y in range(int(cy - r), int(cy + r) + 1):
+            dy = y - cy
+            dx = int(math.sqrt(max(0, r2 - dy * dy)))
+            self.rect(int(cx - dx), y, int(cx + dx) + 1, y + 1, c, a)
 
-def rect(x0, y0, x1, y1, c, a=1.0):
-    for y in range(max(0, int(y0)), min(H, int(y1) + 1)):
-        for x in range(max(0, int(x0)), min(W, int(x1) + 1)):
-            put(x, y, c, a)
+    def ellipse(self, cx, cy, rx, ry, rot, c, a=1.0):
+        co, si = math.cos(rot), math.sin(rot)
+        ext = int(rx + ry)
+        for y in range(max(0, int(cy - ext)), min(self.h, int(cy + ext))):
+            for x in range(max(0, int(cx - ext)),
+                           min(self.w, int(cx + ext))):
+                dx, dy = x - cx, y - cy
+                u = (dx * co + dy * si) / rx
+                v = (-dx * si + dy * co) / ry
+                if u * u + v * v <= 1:
+                    self.blend(x, y, c, a)
 
-def line(x0, y0, x1, y1, w, c, a=1.0):
-    d = max(abs(x1 - x0), abs(y1 - y0), 1)
-    n = int(d) + 1
+    def poly(self, pts, c, a=1.0):
+        ys = [p[1] for p in pts]
+        for y in range(max(0, int(min(ys))),
+                       min(self.h, int(max(ys)) + 1)):
+            xs = []
+            n = len(pts)
+            for i in range(n):
+                x1, y1 = pts[i]
+                x2, y2 = pts[(i + 1) % n]
+                if (y1 <= y < y2) or (y2 <= y < y1):
+                    xs.append(x1 + (y - y1) * (x2 - x1) / (y2 - y1))
+            xs.sort()
+            for i in range(0, len(xs) - 1, 2):
+                self.rect(int(xs[i]), y, int(xs[i + 1]) + 1, y + 1, c, a)
+
+    def capsule(self, x1, y1, x2, y2, r, c, a=1.0):
+        dx, dy = x2 - x1, y2 - y1
+        L = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy / L * r, dx / L * r
+        self.poly([(x1 + nx, y1 + ny), (x2 + nx, y2 + ny),
+                   (x2 - nx, y2 - ny), (x1 - nx, y1 - ny)], c, a)
+        self.disc(x1, y1, r, c, a)
+        self.disc(x2, y2, r, c, a)
+
+
+def arc(c, cx, cy, r, a0, a1, w, col, a=1.0):
+    n = 24
     for i in range(n + 1):
-        t = i / n
-        disc(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, w / 2, c, a)
+        t = a0 + (a1 - a0) * i / n
+        c.disc(cx + r * math.cos(t), cy + r * math.sin(t), w, col, a)
 
-def poly(pts, c, a=1.0):
-    ys = [p[1] for p in pts]
-    for y in range(max(0, int(min(ys))), min(H, int(max(ys)) + 1)):
-        xs = []
-        for i in range(len(pts)):
-            x0, y0 = pts[i]
-            x1, y1 = pts[(i + 1) % len(pts)]
-            if (y0 <= y < y1) or (y1 <= y < y0):
-                xs.append(x0 + (y - y0) * (x1 - x0) / (y1 - y0))
-        xs.sort()
-        for i in range(0, len(xs) - 1, 2):
-            for x in range(max(0, int(xs[i])), min(W, int(xs[i + 1]) + 1)):
-                put(x, y, c, a)
-def rrect(x0, y0, x1, y1, r, c, a=1.0):
-    rect(x0 + r, y0, x1 - r, y1, c, a)
-    rect(x0, y0 + r, x1, y1 - r, c, a)
-    for cx, cy in ((x0 + r, y0 + r), (x1 - r, y0 + r),
-                   (x0 + r, y1 - r), (x1 - r, y1 - r)):
-        disc(cx, cy, r, c, a)
 
-def rrpoly(cx, cy, w, h, ang, c, a=1.0):
-    an = math.radians(ang)
-    co, si = math.cos(an), math.sin(an)
-    pts = []
-    for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
-        dx, dy = sx * w / 2, sy * h / 2
-        pts.append((cx + dx * co - dy * si, cy + dx * si + dy * co))
-    poly(pts, c, a)
+def draw_room(c):
+    # warm wall, golden hour
+    c.vgrad(0, W, 0, 820, hx("F8D391"), hx("EFA964"))
+    # glow spilling from the doorway
+    for r, a in ((420, 0.20), (320, 0.25), (220, 0.30)):
+        c.disc(830, 430, r, hx("FFE9A8"), a)
+    # wooden floor
+    c.rect(0, 820, W, H, hx("B07A45"))
+    for y in range(820, H, 46):
+        c.rect(0, y, W, y + 4, hx("8F5C30"))
+    for x in (180, 520, 860):
+        c.rect(x, 820, x + 4, H, hx("8F5C30"))
+    # light pool on the floor from the doorway
+    c.poly([(720, 820), (980, 820), (1000, H), (480, H)],
+           hx("FFE9A8"), 0.28)
+    # welcome mat
+    c.rect(700, 850, 950, 925, hx("7C322C"))
+    c.rect(715, 862, 935, 913, hx("A4443C"))
+    c.rect(730, 882, 920, 892, hx("C96A5E"), 0.7)
+    # a pair of shoes beside the mat
+    c.ellipse(620, 885, 30, 14, -0.15, hx("6B4423"))
+    c.ellipse(660, 892, 30, 14, -0.05, hx("5A3A1E"))
+    # small potted plant, left corner
+    c.poly([(55, 740), (125, 740), (115, 800), (65, 800)], hx("B65C3A"))
+    c.ellipse(72, 700, 14, 48, -0.3, hx("4E8A4A"))
+    c.ellipse(95, 692, 14, 54, 0.1, hx("3E7040"))
+    c.ellipse(118, 706, 12, 42, 0.4, hx("4E8A4A"))
 
-def rellipse(cx, cy, rx, ry, ang, c, a=1.0):
-    an = math.radians(ang)
-    co, si = math.cos(an), math.sin(an)
-    pts = []
-    for i in range(24):
-        t = 2 * math.pi * i / 24
-        dx, dy = rx * math.cos(t), ry * math.sin(t)
-        pts.append((cx + dx * co - dy * si, cy + dx * si + dy * co))
-    poly(pts, c, a)
 
-def arc(cx, cy, r, a0, a1, w, c, a=1.0):
-    n = max(8, int(abs(a1 - a0) * r / 6))
-    for i in range(n + 1):
-        t = math.radians(a0 + (a1 - a0) * i / n)
-        disc(cx + r * math.cos(t), cy + r * math.sin(t), w / 2, c, a)
+def draw_door(c):
+    # frame
+    c.rect(700, 60, 990, 820, hx("7C4A21"))
+    # bright open doorway, golden light
+    c.vgrad(735, 955, 95, 820, hx("FFF3C4"), hx("FFD97A"))
+    # warm halo just inside the doorway
+    c.disc(845, 430, 150, hx("FFF6D8"), 0.25)
 
-def vgrad(y0, y1, c0, c1, x0=0, x1=W):
-    for y in range(max(0, int(y0)), min(H, int(y1) + 1)):
-        t = (y - y0) / max(1, y1 - y0)
-        rect(x0, y, x1, y, mix(c0, c1, t))
 
-def glow(cx, cy, r, c, peak=0.55):
-    for y in range(max(0, int(cy - r)), min(H, int(cy + r) + 1)):
-        dy = (y - cy) / r
-        dx = (1 - dy * dy) ** 0.5
-        for x in range(max(0, int(cx - r * dx)), min(W, int(cx + r * dx) + 1)):
-            d = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5 / r
-            if d < 1:
-                put(x, y, c, peak * (1 - d) * (1 - d))
-# ---------- palette ----------
-WALL_TOP = (52, 32, 20)
-WALL_BOT = (112, 68, 36)
-FLOOR_TOP = (74, 46, 24)
-FLOOR_BOT = (40, 24, 13)
-WOOD = (88, 54, 28)
-WOOD_D = (62, 36, 18)
-TEAL = (58, 138, 132)
-TEAL_D = (38, 96, 92)
-CREAM = (238, 224, 192)
-RUST = (150, 82, 42)
-DARK = (38, 36, 40)
-GOLD = (255, 196, 66)
-AMBER = (255, 186, 92)
-RED = (198, 58, 44)
+def draw_owner_body(c):
+    SKIN = hx("E8B98A")
+    SWE = hx("2E7D7B")
+    SWD = hx("256362")
+    PANTS = hx("3A3A44")
+    HAIR = hx("4A3226")
+    # legs
+    c.capsule(722, 610, 712, 792, 21, PANTS)
+    c.capsule(770, 610, 782, 792, 21, PANTS)
+    c.ellipse(708, 800, 26, 12, 0, hx("2E2A26"))
+    c.ellipse(786, 800, 26, 12, 0, hx("2E2A26"))
+    # torso, seen from behind
+    c.capsule(746, 400, 746, 620, 56, SWE)
+    # neck and head: back of the head, hair covers the face
+    c.capsule(746, 350, 746, 395, 16, SKIN)
+    c.disc(746, 330, 48, HAIR)
 
-def background():
-    vgrad(0, 660, WALL_TOP, WALL_BOT)
-    vgrad(660, H, FLOOR_TOP, FLOOR_BOT)
-    # floor planks
-    for y in (700, 760, 830, 910, 990):
-        rect(0, y, W, y + 3, (30, 18, 10), 0.55)
-    for y in (680, 740, 800, 870, 950):
-        rect(0, y, W, y + 2, (140, 96, 54), 0.18)
-    # baseboard
-    rect(0, 640, W, 662, WOOD_D)
-    rect(0, 640, W, 645, (150, 104, 60), 0.6)
-    # wall nails / rivets
-    for x in range(60, W, 120):
-        disc(x, 90, 4, (30, 18, 10), 0.5)
-def window():
-    # round window, top right: dusk sky, crescent moon, stars
-    disc(838, 168, 78, (28, 26, 58))
-    disc(838, 168, 70, (58, 52, 110))
-    for y in range(98, 239):
-        t = (y - 98) / 140
-        c = mix((70, 62, 128), (150, 96, 120), t)
-        for x in range(768, 909):
-            if (x - 838) ** 2 + (y - 168) ** 2 <= 70 * 70:
-                put(x, y, c)
-    # stars
-    for sx, sy, sr in ((800, 128, 3), (872, 118, 2), (858, 150, 3),
-                       (806, 168, 2), (884, 186, 2), (822, 108, 2)):
-        disc(sx, sy, sr, (255, 240, 200))
-    # crescent moon
-    disc(852, 138, 22, (250, 238, 200))
-    disc(860, 132, 19, (70, 62, 128))
-    # frame + crossbar
-    arc(838, 168, 74, 0, 360, 8, WOOD_D)
-    rect(834, 100, 842, 236, WOOD_D)
-    rect(770, 164, 906, 172, WOOD_D)
 
-def shelves():
-    # left shelf with jars, right shelf with tools
-    for sx in (60, 760):
-        rect(sx, 300, sx + 190, 312, WOOD)
-        rect(sx, 312, sx + 190, 316, WOOD_D)
-    # jars on left shelf
-    for jx, jc in ((78, (120, 90, 60)), (122, (90, 110, 70)),
-                   (166, (140, 100, 60)), (206, (80, 100, 110))):
-        rrect(jx, 258, jx + 30, 300, 6, jc)
-        rect(jx + 4, 252, jx + 26, 259, WOOD_D)
-        disc(jx + 15, 278, 6, (255, 220, 140), 0.35)
-    # tools on right shelf: wrench + hammer silhouettes
-    rect(786, 262, 796, 300, (150, 150, 155))
-    disc(791, 258, 10, (150, 150, 155))
-    disc(791, 258, 5, WALL_BOT)
-    rect(830, 270, 838, 300, (120, 80, 50))
-    rect(818, 262, 850, 272, (140, 140, 145))
-def lamp():
-    # hanging lamp, top left, the warm heart of the scene
-    line(212, 0, 212, 96, 6, DARK)
-    disc(212, 100, 10, DARK)
-    # shade: wide cone
-    poly([(150, 100), (274, 100), (300, 168), (124, 168)], (60, 90, 70))
-    poly([(150, 100), (274, 100), (300, 168), (124, 168)], (30, 50, 40),
-         0.25)
-    arc(212, 168, 88, 0, 180, 6, (40, 60, 48))
-    # bulb + glow
-    disc(212, 172, 26, (255, 236, 180))
-    disc(212, 172, 18, (255, 250, 220))
-    glow(212, 180, 330, AMBER, 0.5)
-    glow(212, 180, 170, (255, 220, 140), 0.55)
-    # light rays down to the floor
-    for x0, x1 in ((150, 250), (190, 300), (120, 210)):
-        poly([(x0, 170), (x1, 170), (x1 + 120, 660), (x0 - 60, 660)],
-             (255, 200, 110), 0.05)
-    # warm pool on the floor
-    ellipse(430, 880, 330, 70, (255, 190, 100), 0.16)
-    ellipse(430, 880, 200, 44, (255, 210, 130), 0.14)
-def legs():
-    # soft shadow under the dancer
-    ellipse(520, 908, 200, 26, (10, 6, 4), 0.4)
-    ellipse(520, 906, 140, 18, (10, 6, 4), 0.3)
-    # planted leg, on tiptoe (dance!)
-    line(478, 758, 466, 862, 34, TEAL_D)
-    line(478, 758, 466, 862, 26, TEAL)
-    disc(478, 762, 20, DARK)
-    disc(478, 762, 8, (120, 120, 125))
-    disc(468, 858, 18, DARK)
-    # tiptoe foot: small pointed shoe
-    poly([(430, 884), (500, 884), (512, 906), (442, 910)], TEAL_D)
-    ellipse(468, 890, 40, 14, TEAL)
-    # kicked-up leg, bent at the knee, foot flicked out
-    line(548, 756, 622, 796, 34, TEAL_D)
-    line(548, 756, 622, 796, 26, TEAL)
-    line(622, 796, 692, 806, 32, TEAL_D)
-    line(622, 796, 692, 806, 24, TEAL)
-    disc(548, 758, 20, DARK)
-    disc(548, 758, 8, (120, 120, 125))
-    disc(622, 796, 18, DARK)
-    disc(622, 796, 7, (120, 120, 125))
-    disc(692, 806, 16, DARK)
-    # kicked foot, toe pointed
-    rrpoly(716, 806, 62, 26, -18, TEAL)
-    poly([(700, 796), (744, 790), (752, 802), (706, 812)], TEAL_D)
-def body():
-    # torso, leaning into the dance (tilted ~7 degrees)
-    rrpoly(512, 640, 200, 250, 7, TEAL_D)
-    rrpoly(512, 640, 188, 238, 7, TEAL)
-    # belly highlight
-    rrpoly(500, 650, 120, 180, 7, (86, 168, 160), 0.5)
-    # cream chest panel
-    rrpoly(512, 600, 130, 96, 7, CREAM)
-    rrpoly(512, 600, 130, 96, 7, (210, 194, 160), 0.25)
-    # glowing heart on the belly, below the scarf knot so it stays visible
-    hx, hy = 512, 668
-    disc(hx - 14, hy - 6, 15, (235, 70, 60))
-    disc(hx + 14, hy - 6, 15, (235, 70, 60))
-    poly([(hx - 28, hy - 2), (hx + 28, hy - 2), (hx, hy + 28)],
-         (235, 70, 60))
-    glow(hx, hy, 55, (255, 90, 70), 0.35)
-    # pressure gauge beside the heart
-    disc(566, 570, 20, CREAM)
-    arc(566, 570, 17, 0, 360, 3, DARK)
-    disc(566, 570, 5, DARK)
-    line(566, 570, 576, 558, 3, (200, 60, 40))
-    # bolts
-    for bx, by in ((436, 540), (588, 540), (436, 740), (588, 740)):
-        disc(bx, by, 7, (200, 205, 210))
-        disc(bx, by, 3, DARK)
-    # rust freckles on the old paint
-    for rx, ry, rr in ((452, 700, 12), (586, 690, 9), (470, 560, 7),
-                       (572, 730, 11), (500, 748, 8)):
-        disc(rx, ry, rr, RUST, 0.55)
-        disc(rx - 2, ry - 2, rr // 2, (120, 60, 30), 0.5)
-def head():
-    # neck
-    rect(488, 496, 536, 530, DARK)
-    rect(492, 496, 532, 530, (90, 90, 95))
-    # dome head
-    disc(512, 448, 92, TEAL_D)
-    disc(512, 446, 86, TEAL)
-    ellipse(512, 430, 60, 44, (86, 168, 160), 0.45)
-    # side ears (bolt caps)
-    disc(420, 448, 18, DARK)
-    disc(604, 448, 18, DARK)
-    disc(420, 448, 9, (150, 150, 155))
-    disc(604, 448, 9, (150, 150, 155))
-    # antenna with glowing bulb
-    line(512, 358, 512, 310, 8, DARK)
-    disc(512, 300, 16, GOLD)
-    disc(512, 300, 10, (255, 240, 180))
-    glow(512, 300, 46, GOLD, 0.5)
-    # happy closed eyes: upward arcs (joyful squint)
-    arc(472, 442, 26, 200, 340, 9, DARK)
-    arc(552, 442, 26, 200, 340, 9, DARK)
-    # wide open smile
-    arc(512, 462, 46, 15, 165, 10, DARK)
-    # rosy cheeks
-    disc(446, 488, 16, (240, 120, 90), 0.5)
-    disc(578, 488, 16, (240, 120, 90), 0.5)
-    # tiny rust freckle on the cheek
-    disc(470, 402, 6, RUST, 0.5)
-def scarf():
-    # red scarf, knotted at the neck, ends flying with the dance
-    arc(512, 522, 52, 10, 170, 26, RED)
-    arc(512, 522, 52, 10, 170, 26, (220, 80, 60), 0.35)
-    disc(512, 574, 20, RED)
-    disc(512, 574, 20, (160, 40, 30), 0.3)
-    # flying end to the left
-    poly([(470, 560), (400, 540), (352, 566), (392, 592), (462, 584)],
-         RED)
-    poly([(400, 540), (352, 566), (366, 576), (404, 556)], (220, 80, 60),
-         0.5)
-    # flying end to the right, shorter
-    poly([(548, 566), (606, 556), (648, 576), (600, 596), (556, 588)],
-         RED)
-    # scarf stripes
-    line(392, 556, 400, 584, 4, (255, 200, 160), 0.7)
-    line(606, 566, 612, 590, 4, (255, 200, 160), 0.7)
-def arm_left():
-    # left arm flung out wide, waving (dance!)
-    line(428, 580, 340, 520, 32, TEAL_D)
-    line(428, 580, 340, 520, 24, TEAL)
-    disc(428, 580, 19, DARK)
-    disc(428, 580, 8, (120, 120, 125))
-    # elbow joint
-    disc(384, 550, 17, DARK)
-    disc(384, 550, 7, (120, 120, 125))
-    line(340, 520, 296, 462, 30, TEAL_D)
-    line(340, 520, 296, 462, 22, TEAL)
-    disc(296, 462, 16, DARK)
-    # open claw hand, waving
-    line(296, 462, 268, 428, 12, DARK)
-    line(296, 462, 282, 420, 12, DARK)
-    line(296, 462, 310, 424, 12, DARK)
-    disc(268, 428, 7, DARK)
-    disc(282, 420, 7, DARK)
-    disc(310, 424, 7, DARK)
-def arm_right():
-    # right arm raised high, proudly holding the sunflower pot
-    line(596, 580, 660, 480, 32, TEAL_D)
-    line(596, 580, 660, 480, 24, TEAL)
-    disc(596, 580, 19, DARK)
-    disc(596, 580, 8, (120, 120, 125))
-    # elbow joint
-    disc(628, 530, 17, DARK)
-    disc(628, 530, 7, (120, 120, 125))
-    line(660, 480, 690, 392, 30, TEAL_D)
-    line(660, 480, 690, 392, 22, TEAL)
-    disc(690, 392, 16, DARK)
-    # claw hand gripping the pot
-    line(690, 392, 668, 362, 12, DARK)
-    line(690, 392, 712, 362, 12, DARK)
-    # terracotta pot, held up high
-    poly([(648, 330), (724, 330), (712, 386), (660, 386)], (186, 96, 54))
-    poly([(648, 330), (724, 330), (720, 344), (652, 344)], (214, 122, 74))
-    rect(642, 322, 730, 334, (164, 82, 46))
-    disc(686, 358, 8, (120, 58, 32), 0.6)
-def sunflower():
-    # stem + leaves rising from the pot
-    line(686, 326, 686, 250, 10, (70, 140, 60))
-    rellipse(652, 296, 34, 12, -30, (86, 160, 72))
-    rellipse(722, 282, 34, 12, 28, (86, 160, 72))
-    # twelve golden petals around the face
-    for i in range(12):
-        an = 360 * i / 12
-        rad = math.radians(an)
-        cx = 686 + 52 * math.cos(rad)
-        cy = 236 + 52 * math.sin(rad)
-        rellipse(cx, cy, 30, 15, an + 90, (255, 200, 40))
-        rellipse(cx, cy, 22, 10, an + 90, (255, 220, 90), 0.6)
-    # face: brown centre with seed dots
-    disc(686, 236, 40, (96, 58, 22))
-    disc(686, 236, 32, (120, 74, 30))
-    for i in range(14):
-        an = 2 * math.pi * i / 14
-        r = 12 + (i % 3) * 7
-        disc(686 + r * math.cos(an), 236 + r * math.sin(an), 3,
-             (70, 42, 16))
-    disc(686, 236, 6, (70, 42, 16))
-    glow(686, 236, 90, GOLD, 0.3)
-def confetti():
-    # metal shavings drifting like snow, catching the lamp light
-    for _ in range(70):
-        x = RNG.uniform(60, 964)
-        y = RNG.uniform(60, 940)
-        # keep the face and flower clear
-        if (x - 512) ** 2 + (y - 448) ** 2 < 110 * 110:
-            continue
-        if (x - 686) ** 2 + (y - 236) ** 2 < 100 * 100:
-            continue
-        c = RNG.choice([(225, 230, 235), (255, 210, 90), (255, 240, 200),
-                        (180, 190, 200)])
-        if RNG.random() < 0.5:
-            rrpoly(x, y, RNG.uniform(8, 20), RNG.uniform(3, 6),
-                   RNG.uniform(0, 180), c, RNG.uniform(0.5, 0.95))
-        else:
-            disc(x, y, RNG.uniform(2, 5), c, RNG.uniform(0.5, 0.95))
-    # a few bright sparks near the lamp
-    for _ in range(12):
-        x = 212 + RNG.uniform(-120, 120)
-        y = 200 + RNG.uniform(-40, 160)
-        disc(x, y, RNG.uniform(2, 4), (255, 230, 150), 0.9)
-    # dust puffs where the feet dance
-    ellipse(468, 902, 46, 12, (220, 190, 150), 0.25)
-    ellipse(716, 830, 40, 10, (220, 190, 150), 0.22)
-def vignette():
-    # darken the corners so the eye stays on the dancer
-    for y in range(0, H, 2):
-        for x in range(0, W, 2):
-            d = ((x - 512) ** 2 + (y - 470) ** 2) ** 0.5 / 720
-            if d > 0.72:
-                a = min(0.34, (d - 0.72) * 1.1)
-                put(x, y, (12, 6, 4), a)
-                put(x + 1, y, (12, 6, 4), a)
-                put(x, y + 1, (12, 6, 4), a)
-                put(x + 1, y + 1, (12, 6, 4), a)
+def draw_dog(c):
+    FUR = hx("E9A94E")
+    DARK = hx("C9852F")
+    CREAM = hx("F6D493")
+    EAR = hx("B97A2E")
+    NOSE = hx("3A2A1E")
+    TONG = hx("E87A8A")
+    MOUTH = hx("4A2E1E")
+    EYE = hx("2E2018")
+    # tail: smooth tapered plume curving up behind
+    for k in range(20):
+        t = k / 19
+        x = 255 - 130 * t
+        y = 530 - 130 * t + 30 * t * t
+        c.disc(x, y, 26 - 13 * t, FUR)
+    # back legs stretched out behind
+    c.capsule(320, 570, 245, 675, 20, FUR)
+    c.capsule(345, 595, 280, 690, 20, FUR)
+    c.disc(242, 677, 20, CREAM)
+    c.disc(277, 692, 20, CREAM)
+    # body, angled up toward the owner
+    c.ellipse(400, 545, 165, 78, -0.45, FUR)
+    c.ellipse(405, 572, 95, 34, -0.45, CREAM)
+    c.ellipse(425, 595, 120, 28, -0.45, DARK, 0.25)
+
+    # front legs reaching up toward the owner's hands
+    c.capsule(505, 485, 600, 420, 19, FUR)
+    c.capsule(525, 515, 620, 450, 19, FUR)
+    c.disc(602, 418, 18, CREAM)
+    c.disc(622, 448, 18, CREAM)
+    # floppy ear flying back
+    c.poly([(530, 385), (475, 360), (432, 400), (460, 440),
+            (515, 435)], EAR)
+    c.poly([(515, 393), (478, 377), (453, 405), (475, 427),
+            (507, 421)], DARK)
+    # head
+    c.disc(555, 435, 62, FUR)
+    # snout and muzzle
+    c.ellipse(600, 428, 42, 28, -0.4, CREAM)
+    c.disc(638, 412, 15, NOSE)
+    c.ellipse(600, 458, 20, 13, 0, MOUTH)
+    # tongue hanging out, happy
+    c.capsule(598, 462, 605, 515, 10, TONG)
+    # happy closed eye: an upward arch
+    arc(c, 540, 412, 16, 3.3, 6.1, 6, EYE)
+
+
+def draw_owner_arms(c):
+    SWE = hx("2E7D7B")
+    SKIN = hx("E8B98A")
+    # arms wrapping around the leaping dog
+    c.capsule(708, 420, 646, 492, 17, SWE)
+    c.capsule(784, 425, 676, 516, 17, SWE)
+    c.disc(640, 498, 17, SKIN)
+    c.disc(672, 522, 17, SKIN)
+
+
+def draw_motes(c, rng):
+    for _ in range(26):
+        x = rng.randint(640, 980)
+        y = rng.randint(110, 780)
+        c.disc(x, y, rng.randint(2, 5), hx("FFF6D8"),
+               rng.uniform(0.25, 0.7))
+
 
 def main():
-    background()
-    window()
-    shelves()
-    lamp()
-    legs()
-    body()
-    head()
-    scarf()
-    arm_left()
-    arm_right()
-    sunflower()
-    confetti()
-    vignette()
-    path = os.path.join(out_dir(), "entry.png")
-    save_png(path, px)
-    print("wrote", path)
+    rng = random.Random(20261114)
+    c = Canvas(W, H)
+    draw_room(c)
+    draw_door(c)
+    draw_owner_body(c)
+    # soft glow behind the dog, and its shadow on the floor
+    c.disc(400, 510, 260, hx("FFE9A8"), 0.14)
+    c.ellipse(400, 905, 190, 22, 0, hx("5A3A1A"), 0.18)
+    # motion lines behind the leap
+    for x0, y0, x1, y1 in ((170, 450, 230, 438), (155, 525, 220, 516),
+                           (175, 600, 235, 592)):
+        c.capsule(x0, y0, x1, y1, 5, hx("FFF3C4"), 0.5)
+    draw_dog(c)
+    draw_owner_arms(c)
+    draw_motes(c, rng)
+    out = os.path.join(out_dir(), "entry.png")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "wb") as f:
+        f.write(png_bytes(c.rows, W, H))
+    print(out)
+
 
 if __name__ == "__main__":
     main()
-
